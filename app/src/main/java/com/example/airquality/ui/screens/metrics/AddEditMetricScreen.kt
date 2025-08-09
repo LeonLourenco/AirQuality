@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,9 +14,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -27,8 +32,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
@@ -36,6 +43,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil3.compose.AsyncImage
 import com.example.airquality.ui.navigation.Screen
+import com.google.android.gms.maps.model.LatLng
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,7 +58,7 @@ fun AddEditMetricScreen(
     LaunchedEffect(uiState.saveSuccess, uiState.saveError) {
         if (uiState.saveSuccess) {
             Toast.makeText(context, "Medição salva com sucesso!", Toast.LENGTH_SHORT).show()
-            navController.popBackStack()
+            navController.popBackStack(Screen.Home.route, inclusive = false)
         }
         uiState.saveError?.let { error ->
             Toast.makeText(context, "Erro: $error", Toast.LENGTH_LONG).show()
@@ -57,23 +66,24 @@ fun AddEditMetricScreen(
         viewModel.onSaveHandled()
     }
 
-    LaunchedEffect(uiState.locationError) {
-        uiState.locationError?.let { error ->
-            Toast.makeText(context, error, Toast.LENGTH_LONG).show()
-        }
-    }
+    LaunchedEffect(navController.currentBackStackEntry?.savedStateHandle) {
+        val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
 
-    val savedStateHandle = navController.currentBackStackEntry?.savedStateHandle
-    LaunchedEffect(savedStateHandle) {
         savedStateHandle?.get<String>("captured_image_uri")?.let { uriString ->
             viewModel.onImageCaptured(context, uriString.toUri())
             savedStateHandle.remove<String>("captured_image_uri")
         }
+
+        savedStateHandle?.get<LatLng>("selected_location")?.let { latLng ->
+            viewModel.onLocationSelected(latLng.latitude, latLng.longitude)
+            savedStateHandle.remove<LatLng>("selected_location")
+        }
     }
+
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text(uiState.screenTitle) }) // Título dinâmico
+            TopAppBar(title = { Text(uiState.screenTitle) })
         }
     ) { paddingValues ->
         if (uiState.isLoading) {
@@ -86,32 +96,75 @@ fun AddEditMetricScreen(
                     .padding(paddingValues)
                     .padding(16.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 OutlinedTextField(
                     value = uiState.nomeLocal,
                     onValueChange = viewModel::onNomeLocalChange,
                     label = { Text("Nome do Local *") },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
 
-                // Mostra a imagem nova (se capturada) ou a antiga (se existir)
-                val imageModel = uiState.fotoByteArray ?: uiState.fotoUrl
-                imageModel?.let {
-                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
-                        AsyncImage(
-                            model = it,
-                            contentDescription = "Foto da medição",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(200.dp)
+                Column {
+                    Button(
+                        onClick = { navController.navigate(Screen.MapSelection.route) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(imageVector = Icons.Default.LocationOn, contentDescription = null)
+                        Spacer(modifier = Modifier.size(8.dp))
+                        Text("Selecionar Local no Mapa *")
+                    }
+
+                    if (uiState.latitude != null && uiState.longitude != null) {
+                        Row(
+                            modifier = Modifier.padding(top = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF008000))
+                            Spacer(modifier = Modifier.size(8.dp))
+                            Text(
+                                text = String.format(Locale.getDefault(), "Lat: %.6f, Lon: %.6f", uiState.latitude, uiState.longitude),
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "Nenhum local selecionado.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(top = 8.dp)
                         )
                     }
                 }
 
-                Button(onClick = { navController.navigate(Screen.Camera.route) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (uiState.fotoByteArray == null && uiState.fotoUrl == null) "Capturar Foto" else "Capturar Nova Foto")
+                Column {
+                    // Determina qual imagem mostrar (a nova em bytes ou a antiga pela URL)
+                    val showImage = uiState.fotoByteArray != null || uiState.fotoUrl != null
+
+                    if (showImage) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
+                            AsyncImage(
+                                // A lógica de qual modelo usar é decidida aqui dentro
+                                model = uiState.fotoByteArray ?: uiState.fotoUrl,
+                                contentDescription = "Foto da medição",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(200.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    Button(
+                        onClick = { navController.navigate(Screen.Camera.route) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        // A condição para o texto do botão agora é explícita e segura
+                        Text(if (!showImage) "Capturar Foto" else "Capturar Nova Foto")
+                    }
                 }
 
                 Text("Dados do Sensor (Opcional)", style = MaterialTheme.typography.titleMedium)
@@ -123,14 +176,6 @@ fun AddEditMetricScreen(
                 OutlinedTextField(value = uiState.umidade, onValueChange = viewModel::onUmidadeChange, label = { Text("Umidade (%)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
 
                 OutlinedTextField(value = uiState.descricao, onValueChange = viewModel::onDescricaoChange, label = { Text("Descrição (Opcional)") }, modifier = Modifier.fillMaxWidth(), minLines = 3)
-
-                Button(onClick = viewModel::onLocationCaptured, modifier = Modifier.fillMaxWidth(), enabled = !uiState.isFetchingLocation) {
-                    if (uiState.isFetchingLocation) {
-                        CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp))
-                    } else {
-                        Text(if (uiState.latitude == null) "Capturar Localização *" else "Localização Capturada!")
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 

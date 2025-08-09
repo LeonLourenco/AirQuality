@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -42,6 +41,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.example.airquality.data.model.Medicao
 import com.example.airquality.ui.navigation.Screen
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 
 @OptIn(ExperimentalMaterial3Api::class)
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -85,7 +86,7 @@ fun MetricsListScreen(
                     .fillMaxSize()
                     .padding(16.dp)
             ) {
-                Text("Minhas Medições", style = MaterialTheme.typography.headlineMedium)
+                Text("Medições", style = MaterialTheme.typography.headlineMedium)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 if (uiState.isLoading && uiState.medicoes.isEmpty()) {
@@ -130,14 +131,13 @@ fun MetricsListScreen(
 
 @Composable
 fun MedicaoItem(medicao: Medicao, onEditClick: () -> Unit, onDeleteClick: () -> Unit) {
-    val dataHoraFormatada = remember(medicao.momentoMedicao) {
-        // --- CORREÇÃO: Garante que a UI lida com datas nulas ---
-        medicao.momentoMedicao?.let {
-            val data = "${it.date.dayOfMonth.toString().padStart(2, '0')}/${it.date.monthNumber.toString().padStart(2, '0')}/${it.date.year}"
-            val hora = "${it.time.hour.toString().padStart(2, '0')}:${it.time.minute.toString().padStart(2, '0')}"
+    val dataHoraFormatada = remember(medicao.createdAt) {
+        medicao.createdAt?.let { instant ->
+            val localDateTime = instant.toLocalDateTime(TimeZone.currentSystemDefault())
+            val data = "${localDateTime.dayOfMonth.toString().padStart(2, '0')}/${localDateTime.monthNumber.toString().padStart(2, '0')}/${localDateTime.year}"
+            val hora = "${localDateTime.hour.toString().padStart(2, '0')}:${localDateTime.minute.toString().padStart(2, '0')}"
             "$data às $hora"
         } ?: "Data indisponível"
-        // --------------------------------------------------------
     }
 
     Card(

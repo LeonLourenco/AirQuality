@@ -29,11 +29,12 @@ interface MedicaoRepository {
     suspend fun addMedicao(medicao: Medicao, fotoByteArray: ByteArray?): Result<Unit>
 
     /**
-     * Atualiza uma medição existente.
-     * O ID da medição não pode ser nulo.
+     * Atualiza uma medição existente e, opcionalmente, sua foto.
+     * @param medicao O objeto de medição com os dados atualizados.
+     * @param fotoByteArray Um array de bytes da nova foto, ou nulo se a foto não mudou.
      * Retorna um Result de sucesso ou falha.
      */
-    suspend fun updateMedicao(medicao: Medicao): Result<Unit>
+    suspend fun updateMedicao(medicao: Medicao, fotoByteArray: ByteArray?): Result<Unit>
 
     /**
      * Deleta uma medição pelo seu ID.

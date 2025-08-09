@@ -1,40 +1,27 @@
 package com.example.airquality.ui.screens.metrics
 
-import android.Manifest
-import android.app.Application
 import android.content.Context
-import android.content.pm.PackageManager
 import android.net.Uri
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.airquality.data.model.Medicao
 import com.example.airquality.data.repository.MedicaoRepository
 import com.example.airquality.util.ImageUtils
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.Priority
-import com.google.android.gms.tasks.CancellationTokenSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.datetime.Clock
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
 import javax.inject.Inject
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
-import kotlin.coroutines.suspendCoroutine
+import kotlin.math.roundToLong
 
+// --- Data Class do Estado da UI ---
 data class AddEditMetricUiState(
-    val isLoading: Boolean = true, // Começa a carregar
+    val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val saveSuccess: Boolean = false,
     val saveError: String? = null,
-    val isFetchingLocation: Boolean = false,
-    val locationError: String? = null,
 
     // Campos do formulário
     val id: String? = null,
@@ -48,8 +35,9 @@ data class AddEditMetricUiState(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val fotoByteArray: ByteArray? = null,
-    val fotoUrl: String? = null // Para guardar a URL existente
+    val fotoUrl: String? = null
 ) {
+    // Validação do formulário, agora só exige nome e localização.
     val isFormValid: Boolean
         get() = nomeLocal.isNotBlank() && latitude != null && longitude != null
 
@@ -57,12 +45,12 @@ data class AddEditMetricUiState(
         get() = if (id == null) "Nova Medição" else "Editar Medição"
 }
 
+
+// --- ViewModel ---
 @HiltViewModel
 class AddEditMetricViewModel @Inject constructor(
     private val repository: MedicaoRepository,
-    private val savedStateHandle: SavedStateHandle, // Para obter o ID da navegação
-    private val fusedLocationProvider: FusedLocationProviderClient,
-    private val application: Application
+    savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddEditMetricUiState())
@@ -74,7 +62,8 @@ class AddEditMetricViewModel @Inject constructor(
         if (metricId != null) {
             loadMedicao(metricId)
         } else {
-            _uiState.update { it.copy(isLoading = false) } // Pronto para criar um novo
+            // Pronto para criar uma nova medição, sem necessidade de carregar
+            _uiState.update { it.copy(isLoading = false) }
         }
     }
 
@@ -82,6 +71,9 @@ class AddEditMetricViewModel @Inject constructor(
         viewModelScope.launch {
             repository.getMedicaoById(id).onSuccess { medicao ->
                 if (medicao != null) {
+                    // [MODIFICADO] Extrai lat/lon da string de localização
+                    val (lat, lon) = parseLocationString(medicao.localizacao)
+
                     _uiState.update {
                         it.copy(
                             isLoading = false,
@@ -93,9 +85,9 @@ class AddEditMetricViewModel @Inject constructor(
                             hcho = medicao.hchoMgM3?.toString() ?: "",
                             temperatura = medicao.temperaturaC?.toString() ?: "",
                             umidade = medicao.umidadePercent?.toString() ?: "",
-                            latitude = medicao.latitude,
-                            longitude = medicao.longitude,
-                            fotoUrl = medicao.fotoUrl
+                            latitude = lat,
+                            longitude = lon,
+                            fotoUrl = medicao.foto
                         )
                     }
                 } else {
@@ -107,6 +99,8 @@ class AddEditMetricViewModel @Inject constructor(
         }
     }
 
+    // --- Handlers de Mudança de Estado ---
+
     fun onNomeLocalChange(newValue: String) { _uiState.update { it.copy(nomeLocal = newValue) } }
     fun onDescricaoChange(newValue: String) { _uiState.update { it.copy(descricao = newValue) } }
     fun onCo2Change(newValue: String) { _uiState.update { it.copy(co2 = newValue) } }
@@ -115,60 +109,29 @@ class AddEditMetricViewModel @Inject constructor(
     fun onTemperaturaChange(newValue: String) { _uiState.update { it.copy(temperatura = newValue) } }
     fun onUmidadeChange(newValue: String) { _uiState.update { it.copy(umidade = newValue) } }
 
+    /**
+     * Chamado quando uma nova imagem é capturada pela câmera.
+     */
     fun onImageCaptured(context: Context, uri: Uri) {
         viewModelScope.launch {
             val byteArray = ImageUtils().uriToByteArray(context, uri)
-            _uiState.update { it.copy(fotoByteArray = byteArray, fotoUrl = null) } // Limpa a URL antiga se uma nova foto for tirada
+            _uiState.update { it.copy(fotoByteArray = byteArray, fotoUrl = null) }
         }
     }
 
-    fun onLocationCaptured() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isFetchingLocation = true, locationError = null) }
-
-            if (!hasLocationPermission()) {
-                _uiState.update { it.copy(isFetchingLocation = false, locationError = "Permissão de localização negada.") }
-                return@launch
-            }
-
-            try {
-                val location = getCurrentLocation()
-                _uiState.update {
-                    it.copy(
-                        isFetchingLocation = false,
-                        latitude = location.latitude,
-                        longitude = location.longitude
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isFetchingLocation = false, locationError = "Não foi possível obter a localização: ${e.message}") }
-            }
+    /**
+     * Chamado quando uma localização é selecionada e retornada pela MapSelectionScreen.
+     */
+    fun onLocationSelected(latitude: Double, longitude: Double) {
+        _uiState.update {
+            it.copy(latitude = latitude, longitude = longitude)
         }
     }
 
-    private suspend fun getCurrentLocation(): android.location.Location = suspendCoroutine { continuation ->
-        val cancellationTokenSource = CancellationTokenSource()
-        fusedLocationProvider.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellationTokenSource.token)
-            .addOnSuccessListener { location ->
-                if (location != null) {
-                    continuation.resume(location)
-                } else {
-                    continuation.resumeWithException(RuntimeException("Localização não encontrada."))
-                }
-            }
-            .addOnFailureListener { e ->
-                continuation.resumeWithException(e)
-            }
-    }
 
-    private fun hasLocationPermission(): Boolean {
-        return ContextCompat.checkSelfPermission(
-            application.applicationContext,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-
+    /**
+     * Salva ou atualiza a medição no repositório.
+     */
     fun saveOrUpdateMedicao() {
         if (!_uiState.value.isFormValid) return
 
@@ -176,28 +139,27 @@ class AddEditMetricViewModel @Inject constructor(
 
         viewModelScope.launch {
             val currentState = _uiState.value
+            val locationString = "POINT(${currentState.longitude} ${currentState.latitude})"
+
             val medicao = Medicao(
                 id = currentState.id,
                 nomeLocal = currentState.nomeLocal,
-                latitude = currentState.latitude!!,
-                longitude = currentState.longitude!!,
-                momentoMedicao = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()),
+                localizacao = locationString,
                 co2Ppm = currentState.co2.toDoubleOrNull(),
                 hchoMgM3 = currentState.hcho.toDoubleOrNull(),
                 tvocMgM3 = currentState.tvoc.toDoubleOrNull(),
                 temperaturaC = currentState.temperatura.toDoubleOrNull(),
                 umidadePercent = currentState.umidade.toDoubleOrNull(),
                 descricao = currentState.descricao.takeIf { it.isNotBlank() },
-                fotoUrl = currentState.fotoUrl, // Mantém a URL existente se não houver nova foto
-                createdAt = null
+                foto = currentState.fotoUrl
             )
 
+            // A lógica de decisão permanece, mas agora a correção será no repositório
             val result = if (medicao.id == null) {
                 repository.addMedicao(medicao, currentState.fotoByteArray)
             } else {
-                // Para edição, ainda não estamos a lidar com a atualização da foto.
-                // Uma implementação mais completa poderia apagar a foto antiga e fazer upload da nova.
-                repository.updateMedicao(medicao)
+                // ✅ ESTA É A CHAMADA CORRETA
+                repository.updateMedicao(medicao, currentState.fotoByteArray)
             }
 
             result.onSuccess {
@@ -208,7 +170,26 @@ class AddEditMetricViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Limpa os estados de sucesso/erro após a navegação.
+     */
     fun onSaveHandled() {
         _uiState.update { it.copy(saveSuccess = false, saveError = null) }
+    }
+
+    /**
+     * Função auxiliar para converter a string "POINT(lon lat)" em um Par de Doubles.
+     */
+    private fun parseLocationString(location: String?): Pair<Double?, Double?> {
+        if (location == null) return Pair(null, null)
+        return try {
+            val coords = location.removePrefix("POINT(").removeSuffix(")").split(" ")
+            val lon = coords[0].toDouble()
+            val lat = coords[1].toDouble()
+            Pair(lat, lon)
+        } catch (e: Exception) {
+            // Retorna nulo se a string estiver mal formatada
+            Pair(null, null)
+        }
     }
 }

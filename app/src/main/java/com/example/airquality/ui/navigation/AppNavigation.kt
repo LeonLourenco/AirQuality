@@ -10,8 +10,10 @@ import androidx.navigation.navArgument
 import com.example.airquality.ui.components.CameraScreen
 import com.example.airquality.ui.screens.home.HomeScreen
 import com.example.airquality.ui.screens.map.MapScreen
+import com.example.airquality.ui.screens.map.MapSelectionScreen
 import com.example.airquality.ui.screens.metrics.AddEditMetricScreen
 import com.example.airquality.ui.screens.metrics.MetricsListScreen
+import com.google.android.gms.maps.model.LatLng
 
 @Composable
 fun AppNavigation(navController: NavHostController) {
@@ -31,16 +33,13 @@ fun AppNavigation(navController: NavHostController) {
 
         // Rota para Adicionar/Editar com argumento opcional
         composable(
-            // CORREÇÃO: Usar a sintaxe de query parameter para o argumento opcional
             route = "${Screen.AddEditMetric.route}?metricId={metricId}",
             arguments = listOf(navArgument("metricId") {
                 type = NavType.StringType
                 nullable = true
-                defaultValue = null // Definir o valor padrão como nulo
+                defaultValue = null
             })
         ) {
-            // O ViewModel dentro de AddEditMetricScreen irá lidar com a lógica
-            // de buscar a medição se um metricId for passado.
             AddEditMetricScreen(navController = navController)
         }
 
@@ -48,11 +47,28 @@ fun AppNavigation(navController: NavHostController) {
         composable(route = Screen.Camera.route) {
             CameraScreen(
                 onImageCaptured = { uri: Uri ->
-                    // Devolve o URI da imagem para a tela anterior (AddEditMetricScreen)
-                    // usando o SavedStateHandle para garantir a comunicação segura.
+                    // Devolve o URI da imagem para a tela anterior
                     navController.previousBackStackEntry
                         ?.savedStateHandle
                         ?.set("captured_image_uri", uri.toString())
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // Rota para a tela de seleção de mapa
+        composable(route = Screen.MapSelection.route) {
+            MapSelectionScreen(
+                onLocationSelected = { latLng: LatLng ->
+                    // Devolve o objeto LatLng para a tela anterior (AddEditMetricScreen)
+                    // Usando o SavedStateHandle para comunicação segura entre telas.
+                    navController.previousBackStackEntry
+                        ?.savedStateHandle
+                        ?.set("selected_location", latLng)
+                    navController.popBackStack()
+                },
+                onCancel = {
+                    // Simplesmente volta para a tela anterior sem enviar dados
                     navController.popBackStack()
                 }
             )

@@ -14,11 +14,13 @@ class MedicaoRepositoryImpl @Inject constructor(
     private val supabaseClient: SupabaseClient
 ) : MedicaoRepository {
 
+    // Referências para a tabela e o bucket do Supabase
     private val medicoesTable = supabaseClient.postgrest["medicoes"]
-    private val fotosBucket = supabaseClient.storage["fotos-locais"]
+    private val fotosBucket = supabaseClient.storage["fotos_medicoes"]
 
     override suspend fun getMedicoes(): Result<List<Medicao>> {
         return try {
+            // Chama a RPC que já converte a localização para texto
             val medicoes = supabaseClient.postgrest.rpc("get_all_medicoes").decodeList<Medicao>()
             Result.success(medicoes)
         } catch (e: Exception) {
@@ -28,11 +30,10 @@ class MedicaoRepositoryImpl @Inject constructor(
 
     override suspend fun getMedicaoById(id: String): Result<Medicao?> {
         return try {
-            val medicao = medicoesTable.select {
-                filter {
-                    eq("id", id)
-                }
-            }.decodeSingleOrNull<Medicao>()
+            // Chama a nova RPC para buscar por ID, que também converte a localização
+            val medicao = supabaseClient.postgrest.rpc("get_medicao_by_id", buildJsonObject {
+                put("p_id", id)
+            }).decodeSingleOrNull<Medicao>()
             Result.success(medicao)
         } catch (e: Exception) {
             Result.failure(e)
@@ -42,53 +43,50 @@ class MedicaoRepositoryImpl @Inject constructor(
     override suspend fun addMedicao(medicao: Medicao, fotoByteArray: ByteArray?): Result<Unit> {
         return try {
             var finalMedicao = medicao
+
+            // Se uma foto foi fornecida, faz o upload e atualiza o objeto.
             if (fotoByteArray != null) {
                 val imagePath = "public/${UUID.randomUUID()}.jpg"
-                fotosBucket.upload(path = imagePath, data = fotoByteArray, upsert = false)
-                val imageUrl = fotosBucket.publicUrl(path = imagePath)
-                finalMedicao = medicao.copy(fotoUrl = imageUrl)
+                val imageUrl = fotosBucket.upload(path = imagePath, data = fotoByteArray, upsert = false)
+                finalMedicao = medicao.copy(foto = imageUrl)
             }
-
-            val medicaoJson = buildJsonObject {
-                put("nome_local", finalMedicao.nomeLocal)
-                put("localizacao", "POINT(${finalMedicao.longitude} ${finalMedicao.latitude})")
-                put("data", finalMedicao.momentoMedicao?.date.toString())
-                put("hora", finalMedicao.momentoMedicao?.time.toString())
-                finalMedicao.co2Ppm?.let { put("co2_ppm", it) }
-                finalMedicao.hchoMgM3?.let { put("hcho_mg_m3", it) }
-                finalMedicao.tvocMgM3?.let { put("tvoc_mg_m3", it) }
-                finalMedicao.temperaturaC?.let { put("temperatura_c", it) }
-                finalMedicao.umidadePercent?.let { put("umidade_percent", it) }
-                finalMedicao.descricao?.let { put("descricao", it) }
-                finalMedicao.fotoUrl?.let { put("foto", it) }
-            }
-
-            medicoesTable.insert(medicaoJson)
+            // Insere o objeto final (com ou sem a nova URL da foto)
+            medicoesTable.insert(finalMedicao)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    override suspend fun updateMedicao(medicao: Medicao): Result<Unit> {
+    override suspend fun updateMedicao(medicao: Medicao, fotoByteArray: ByteArray?): Result<Unit> {
         return try {
             val medicaoId = requireNotNull(medicao.id) { "ID da medição não pode ser nulo para atualização" }
 
-            val medicaoJson = buildJsonObject {
-                put("nome_local", medicao.nomeLocal)
-                put("localizacao", "POINT(${medicao.longitude} ${medicao.latitude})")
-                put("data", medicao.momentoMedicao?.date.toString())
-                put("hora", medicao.momentoMedicao?.time.toString())
-                medicao.co2Ppm?.let { put("co2_ppm", it) }
-                medicao.hchoMgM3?.let { put("hcho_mg_m3", it) }
-                medicao.tvocMgM3?.let { put("tvoc_mg_m3", it) }
-                medicao.temperaturaC?.let { put("temperatura_c", it) }
-                medicao.umidadePercent?.let { put("umidade_percent", it) }
-                medicao.descricao?.let { put("descricao", it) }
-                medicao.fotoUrl?.let { put("foto", it) }
+            var medicaoParaAtualizar = medicao
+
+            // Se uma nova foto foi fornecida...
+            if (fotoByteArray != null) {
+                // Apaga a foto antiga para não deixar lixo no Storage.
+                medicao.foto?.let { urlAntiga ->
+                    try {
+                        val nomeArquivoAntigo = urlAntiga.substringAfterLast("/")
+                        fotosBucket.delete(nomeArquivoAntigo)
+                    } catch (e: Exception) {
+                        // Apenas loga o erro, não impede a operação principal.
+                        println("Falha ao apagar foto antiga: ${e.message}")
+                    }
+                }
+
+                // 2. Faz o upload da nova foto.
+                val imagePath = "public/${UUID.randomUUID()}.jpg"
+                val novaUrl = fotosBucket.upload(path = imagePath, data = fotoByteArray, upsert = false)
+
+                // 3. Atualiza o objeto de medição com a URL da nova foto.
+                medicaoParaAtualizar = medicao.copy(foto = novaUrl)
             }
 
-            medicoesTable.update(medicaoJson) {
+            // 4. Atualiza os dados na tabela, usando o objeto (possivelmente já com a nova URL).
+            medicoesTable.update(medicaoParaAtualizar) {
                 filter {
                     eq("id", medicaoId)
                 }
@@ -101,6 +99,18 @@ class MedicaoRepositoryImpl @Inject constructor(
 
     override suspend fun deleteMedicao(id: String): Result<Unit> {
         return try {
+            // 1. Antes de deletar o registro, busca a URL da foto para apagá-la.
+            val medicaoParaDeletar = getMedicaoById(id).getOrNull()
+            medicaoParaDeletar?.foto?.let { fotoUrl ->
+                try {
+                    val nomeArquivo = fotoUrl.substringAfterLast("/")
+                    fotosBucket.delete(nomeArquivo)
+                } catch (e: Exception) {
+                    println("Falha ao apagar foto do storage: ${e.message}")
+                }
+            }
+
+            // 2. Deleta o registro da tabela.
             medicoesTable.delete {
                 filter {
                     eq("id", id)

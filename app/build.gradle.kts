@@ -105,6 +105,8 @@ dependencies {
     implementation("com.google.maps.android:maps-compose:6.0.0")
     implementation("com.google.maps.android:maps-compose-utils:6.0.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("com.google.android.gms:play-services-maps")
+    implementation("com.google.accompanist:accompanist-permissions:0.31.5-beta")
 
     // CameraX
     implementation("androidx.camera:camera-core:1.3.4")

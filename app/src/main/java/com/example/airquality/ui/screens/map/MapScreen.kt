@@ -40,6 +40,23 @@ import com.google.maps.android.compose.MapProperties
 import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.rememberCameraPositionState
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import java.util.Locale
+
+private fun parseLocationString(location: String?): LatLng? {
+    if (location == null) return null
+    return try {
+        val coords = location.removePrefix("POINT(").removeSuffix(")").split(" ")
+        val lon = coords[0].toDouble()
+        val lat = coords[1].toDouble()
+        LatLng(lat, lon)
+    } catch (e: Exception) {
+        // Retorna nulo se a string estiver mal formatada ou vazia
+        null
+    }
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,15 +112,15 @@ private fun MapContent(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    val defaultLocation = LatLng(-23.5505, -46.6333)
+    val defaultLocation = LatLng(-23.5505, -46.6333) // São Paulo
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(defaultLocation, 10f)
     }
 
     LaunchedEffect(uiState.medicoes) {
-        uiState.medicoes.firstOrNull { it.latitude != null && it.longitude != null }?.let {
-            val firstLocation = LatLng(it.latitude!!, it.longitude!!)
-            cameraPositionState.position = CameraPosition.fromLatLngZoom(firstLocation, 12f)
+        val firstLocation = uiState.medicoes.mapNotNull { parseLocationString(it.localizacao) }.firstOrNull()
+        firstLocation?.let {
+            cameraPositionState.position = CameraPosition.fromLatLngZoom(it, 12f)
         }
     }
 
@@ -113,11 +130,10 @@ private fun MapContent(
             cameraPositionState = cameraPositionState,
             properties = MapProperties(isMyLocationEnabled = isMyLocationEnabled)
         ) {
-            // --- CORREÇÃO: Filtra apenas medições com localização válida ---
             uiState.medicoes.forEach { medicao ->
-                if (medicao.latitude != null && medicao.longitude != null) {
+                parseLocationString(medicao.localizacao)?.let { latLng ->
                     Marker(
-                        state = MarkerState(position = LatLng(medicao.latitude, medicao.longitude)),
+                        state = MarkerState(position = latLng),
                         title = medicao.nomeLocal,
                         snippet = "CO₂: ${medicao.co2Ppm ?: "N/A"}",
                         onClick = {
@@ -127,7 +143,6 @@ private fun MapContent(
                     )
                 }
             }
-            // -------------------------------------------------------------
         }
 
         FloatingActionButton(
@@ -157,10 +172,11 @@ private fun MapContent(
 
 @Composable
 fun MedicaoDetailSheet(medicao: Medicao) {
-    val dataHoraFormatada = remember(medicao.momentoMedicao) {
-        medicao.momentoMedicao?.let {
-            val data = "${it.date.dayOfMonth}/${it.date.monthNumber}/${it.date.year}"
-            val hora = "${it.time.hour.toString().padStart(2, '0')}:${it.time.minute.toString().padStart(2, '0')}"
+    val dataHoraFormatada = remember(medicao.createdAt) {
+        medicao.createdAt?.let { instant ->
+            val localDateTime = instant.toLocalDateTime(TimeZone.currentSystemDefault())
+            val data = "${localDateTime.dayOfMonth}/${localDateTime.monthNumber}/${localDateTime.year}"
+            val hora = "${localDateTime.hour.toString().padStart(2, '0')}:${localDateTime.minute.toString().padStart(2, '0')}"
             "$data às $hora"
         } ?: "Data indisponível"
     }
@@ -173,7 +189,7 @@ fun MedicaoDetailSheet(medicao: Medicao) {
         Text(medicao.nomeLocal, style = MaterialTheme.typography.headlineSmall)
         Spacer(modifier = Modifier.height(8.dp))
 
-        medicao.fotoUrl?.let { url ->
+        medicao.foto?.let { url ->
             AsyncImage(
                 model = url,
                 contentDescription = "Foto do local: ${medicao.nomeLocal}",
@@ -187,9 +203,12 @@ fun MedicaoDetailSheet(medicao: Medicao) {
 
         Text("Data: $dataHoraFormatada", style = MaterialTheme.typography.bodyLarge)
 
-        // --- CORREÇÃO: Exibe localização apenas se disponível ---
-        if (medicao.latitude != null && medicao.longitude != null) {
-            Text("Localização: Lat ${medicao.latitude}, Lon ${medicao.longitude}", style = MaterialTheme.typography.bodyMedium)
+        // Exibe localização apenas se puder ser extraída da string
+        parseLocationString(medicao.localizacao)?.let { latLng ->
+            Text(
+                text = String.format(Locale.getDefault(), "Localização: Lat %.4f, Lon %.4f", latLng.latitude, latLng.longitude),
+                style = MaterialTheme.typography.bodyMedium
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -197,7 +216,7 @@ fun MedicaoDetailSheet(medicao: Medicao) {
         Text("HCHO: ${medicao.hchoMgM3 ?: "N/A"} mg/m³", style = MaterialTheme.typography.bodyMedium)
         Text("TVOC: ${medicao.tvocMgM3 ?: "N/A"} mg/m³", style = MaterialTheme.typography.bodyMedium)
         Text("Temperatura: ${medicao.temperaturaC ?: "N/A"} °C", style = MaterialTheme.typography.bodyMedium)
-        Text("Humidade: ${medicao.umidadePercent ?: "N/A"} %", style = MaterialTheme.typography.bodyMedium)
+        Text("Umidade: ${medicao.umidadePercent ?: "N/A"} %", style = MaterialTheme.typography.bodyMedium)
         medicao.descricao?.let {
             if (it.isNotBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))

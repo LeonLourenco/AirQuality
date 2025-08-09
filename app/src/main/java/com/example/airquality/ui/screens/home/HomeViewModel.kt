@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Instant // <-- Adicione esta importação se faltar
 import javax.inject.Inject
 
 data class HomeUiState(
@@ -20,7 +21,6 @@ data class HomeUiState(
     val maxTvoc: Double = 0.0,
     val insightText: String = "Analisando dados...",
     val isLoading: Boolean = false,
-    // Produtor de modelo para o gráfico de tendência de CO2
     val co2TrendProducer: ChartEntryModelProducer = ChartEntryModelProducer()
 )
 
@@ -36,9 +36,6 @@ class HomeViewModel @Inject constructor(
         loadAndProcessData()
     }
 
-    /**
-     * Função pública para ser chamada pela UI para atualizar os dados.
-     */
     fun refresh() {
         loadAndProcessData()
     }
@@ -64,9 +61,8 @@ class HomeViewModel @Inject constructor(
         val mediaCo2 = medicoes.mapNotNull { it.co2Ppm }.average()
         val maxTvoc = medicoes.mapNotNull { it.tvocMgM3 }.maxOrNull() ?: 0.0
 
-        // Prepara os dados para o gráfico Vico
         val tendenciaCo2Entries = medicoes
-            .sortedBy { it.createdAt }
+            .sortedBy { it.createdAt ?: Instant.DISTANT_PAST } // Ordena usando a data, tratando nulos como os mais antigos
             .mapNotNull { it.co2Ppm }
             .mapIndexed { index, value -> entryOf(index.toFloat(), value.toFloat()) }
 
@@ -81,7 +77,6 @@ class HomeViewModel @Inject constructor(
                 insightText = insight
             )
         }
-        // Atualiza o produtor do gráfico com as novas entradas
         _uiState.value.co2TrendProducer.setEntries(tendenciaCo2Entries)
     }
 

@@ -1,7 +1,6 @@
 package com.example.airquality.data.model
 
 import kotlinx.datetime.Instant
-import kotlinx.datetime.LocalDateTime
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -13,14 +12,9 @@ data class Medicao(
     @SerialName("nome_local")
     val nomeLocal: String,
 
-    @SerialName("latitude")
-    val latitude: Double? = null,
-
-    @SerialName("longitude")
-    val longitude: Double? = null,
-
-    @SerialName("momento_medicao")
-    val momentoMedicao: LocalDateTime? = null,
+    // [MODIFICADO] Substitui lat/lon por um único campo de localização
+    @SerialName("localizacao")
+    val localizacao: String,
 
     @SerialName("co2_ppm")
     val co2Ppm: Double? = null,
@@ -40,9 +34,9 @@ data class Medicao(
     @SerialName("descricao")
     val descricao: String? = null,
 
-    @SerialName("foto")
-    val fotoUrl: String? = null,
-
     @SerialName("created_at")
-    val createdAt: Instant? = null
+    val createdAt: Instant? = null,
+
+    @SerialName("foto")
+    val foto: String? = null
 )
