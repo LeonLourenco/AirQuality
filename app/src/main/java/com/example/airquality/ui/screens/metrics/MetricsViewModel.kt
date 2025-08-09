@@ -6,16 +6,16 @@ import com.example.airquality.data.model.Medicao
 import com.example.airquality.data.repository.MedicaoRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class MetricsUiState(
-    val medicoes: List<Medicao> = emptyList(),
     val isLoading: Boolean = false,
-    val error: String? = null
+    val medicoes: List<Medicao> = emptyList(),
+    val error: String? = null,
+    val searchQuery: String = "" // Estado para guardar o texto da pesquisa
 )
 
 @HiltViewModel
@@ -24,47 +24,71 @@ class MetricsViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(MetricsUiState())
-    val uiState: StateFlow<MetricsUiState> = _uiState.asStateFlow()
+    val uiState = _uiState.asStateFlow()
+
+    // Cache local para guardar a lista completa de medições, evitando buscas repetidas no DB
+    private var allMedicoes: List<Medicao> = emptyList()
 
     init {
-        loadMedicoes()
+        refresh()
     }
 
     /**
-     * Função pública para ser chamada pela UI para atualizar os dados.
+     * Busca os dados mais recentes do repositório.
      */
     fun refresh() {
-        loadMedicoes()
-    }
-
-    private fun loadMedicoes() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
+            _uiState.update { it.copy(isLoading = true, error = null) }
             repository.getMedicoes().onSuccess { medicoes ->
-                // Ordena as medições pela data de criação para exibir as mais recentes primeiro
-                val sortedMedicoes = medicoes.sortedByDescending { it.createdAt }
-                _uiState.update {
-                    it.copy(isLoading = false, medicoes = sortedMedicoes, error = null)
-                }
+                // Atualiza o cache local com os novos dados
+                allMedicoes = medicoes
+                // Aplica o filtro atual (pode ser uma string vazia) à nova lista
+                filterMedicoes()
             }.onFailure { error ->
-                _uiState.update {
-                    it.copy(isLoading = false, error = error.localizedMessage)
-                }
+                _uiState.update { it.copy(isLoading = false, error = error.localizedMessage) }
             }
         }
     }
 
+    /**
+     * Atualiza o estado da query de pesquisa e aciona a filtragem.
+     * @param query O novo texto digitado pelo usuário na barra de pesquisa.
+     */
+    fun onSearchQueryChange(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+        filterMedicoes()
+    }
+
+    /**
+     * Filtra a lista de medições com base na query de pesquisa atual.
+     * A UI é atualizada com a lista filtrada.
+     */
+    private fun filterMedicoes() {
+        val query = _uiState.value.searchQuery
+        val filteredList = if (query.isBlank()) {
+            // Se a pesquisa estiver vazia, mostra a lista completa
+            allMedicoes
+        } else {
+            // Se houver texto, filtra pelo nome do local (ignorando maiúsculas/minúsculas)
+            allMedicoes.filter {
+                it.nomeLocal.contains(query, ignoreCase = true)
+            }
+        }
+        _uiState.update { it.copy(isLoading = false, medicoes = filteredList) }
+    }
+
+
+    /**
+     * Deleta uma medição e atualiza a lista.
+     * @param id O ID da medição a ser deletada.
+     */
     fun deleteMedicao(id: String) {
         viewModelScope.launch {
-            // Mostra o loading enquanto deleta
-            _uiState.update { it.copy(isLoading = true) }
             repository.deleteMedicao(id).onSuccess {
-                // Recarrega a lista após a exclusão para garantir que a UI esteja atualizada
-                loadMedicoes()
+                // Após deletar com sucesso, busca os dados novamente para refletir a mudança
+                refresh()
             }.onFailure { error ->
-                _uiState.update {
-                    it.copy(isLoading = false, error = "Falha ao excluir: ${error.localizedMessage}")
-                }
+                _uiState.update { it.copy(error = error.localizedMessage) }
             }
         }
     }

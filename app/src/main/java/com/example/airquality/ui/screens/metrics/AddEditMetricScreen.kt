@@ -1,6 +1,8 @@
 package com.example.airquality.ui.screens.metrics
 
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,24 +14,37 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,6 +59,12 @@ import androidx.navigation.NavController
 import coil3.compose.AsyncImage
 import com.example.airquality.ui.navigation.Screen
 import com.google.android.gms.maps.model.LatLng
+import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.toLocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,6 +75,10 @@ fun AddEditMetricScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+
+    // Estados para controlar a visibilidade dos diálogos de data e hora
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.saveSuccess, uiState.saveError) {
         if (uiState.saveSuccess) {
@@ -106,6 +131,38 @@ fun AddEditMetricScreen(
                     singleLine = true
                 )
 
+                // Seção de Data e Hora
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Campo de Data
+                    OutlinedTextField(
+                        value = uiState.dataMedicao?.let {
+                            val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")
+                            java.time.LocalDate.of(it.year, it.month, it.dayOfMonth).format(formatter)
+                        } ?: "",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Data *") },
+                        leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Ícone de Data") },
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { showDatePicker = true }
+                    )
+                    // Campo de Hora
+                    OutlinedTextField(
+                        value = uiState.horaMedicao?.let {
+                            "${it.hour.toString().padStart(2, '0')}:${it.minute.toString().padStart(2, '0')}"
+                        } ?: "",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Hora *") },
+                        leadingIcon = { Icon(Icons.Default.Schedule, contentDescription = "Ícone de Hora") },
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { showTimePicker = true }
+                    )
+                }
+
+                // Seção de Localização
                 Column {
                     Button(
                         onClick = { navController.navigate(Screen.MapSelection.route) },
@@ -139,20 +196,17 @@ fun AddEditMetricScreen(
                     }
                 }
 
+                // Seção da Foto
                 Column {
-                    // Determina qual imagem mostrar (a nova em bytes ou a antiga pela URL)
                     val showImage = uiState.fotoByteArray != null || uiState.fotoUrl != null
 
                     if (showImage) {
                         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth()) {
                             AsyncImage(
-                                // A lógica de qual modelo usar é decidida aqui dentro
                                 model = uiState.fotoByteArray ?: uiState.fotoUrl,
                                 contentDescription = "Foto da medição",
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(200.dp)
+                                modifier = Modifier.fillMaxWidth().height(200.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(8.dp))
@@ -162,7 +216,6 @@ fun AddEditMetricScreen(
                         onClick = { navController.navigate(Screen.Camera.route) },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        // A condição para o texto do botão agora é explícita e segura
                         Text(if (!showImage) "Capturar Foto" else "Capturar Nova Foto")
                     }
                 }
@@ -182,15 +235,68 @@ fun AddEditMetricScreen(
                 Button(
                     onClick = viewModel::saveOrUpdateMedicao,
                     enabled = uiState.isFormValid && !uiState.isSaving,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) {
                     if (uiState.isSaving) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(24.dp))
                     } else {
                         Text("Salvar Medição")
                     }
+                }
+            }
+        }
+    }
+
+    // Diálogo do Date Picker
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = uiState.dataMedicao?.atStartOfDayIn(TimeZone.UTC)?.toEpochMilliseconds()
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        val data = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.UTC).date
+                        viewModel.onDataChange(data)
+                    }
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancelar") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    // Diálogo do Time Picker
+    if (showTimePicker) {
+        val timePickerState = rememberTimePickerState(
+            initialHour = uiState.horaMedicao?.hour ?: java.time.LocalTime.now().hour,
+            initialMinute = uiState.horaMedicao?.minute ?: java.time.LocalTime.now().minute,
+            is24Hour = true
+        )
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(28.dp))
+        ) {
+            Column(
+                modifier = Modifier.padding(top = 28.dp, start = 20.dp, end = 20.dp, bottom = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                TimePicker(state = timePickerState)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = { showTimePicker = false }) { Text("Cancelar") }
+                    Spacer(modifier = Modifier.size(8.dp))
+                    TextButton(onClick = {
+                        viewModel.onHoraChange(LocalTime(timePickerState.hour, timePickerState.minute))
+                        showTimePicker = false
+                    }) { Text("OK") }
                 }
             }
         }

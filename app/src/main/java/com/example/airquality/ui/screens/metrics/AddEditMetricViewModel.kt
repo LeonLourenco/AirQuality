@@ -13,10 +13,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.LocalTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
 import javax.inject.Inject
-import kotlin.math.roundToLong
 
-// --- Data Class do Estado da UI ---
 data class AddEditMetricUiState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
@@ -35,18 +41,24 @@ data class AddEditMetricUiState(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val fotoByteArray: ByteArray? = null,
-    val fotoUrl: String? = null
+    val fotoUrl: String? = null,
+
+    // Campos para guardar a data e hora selecionadas
+    val dataMedicao: LocalDate? = null,
+    val horaMedicao: LocalTime? = null
 ) {
-    // Validação do formulário, agora só exige nome e localização.
+    // Validação do formulário agora checa todos os campos obrigatórios
     val isFormValid: Boolean
-        get() = nomeLocal.isNotBlank() && latitude != null && longitude != null
+        get() = nomeLocal.isNotBlank() &&
+                latitude != null &&
+                longitude != null &&
+                dataMedicao != null &&
+                horaMedicao != null
 
     val screenTitle: String
         get() = if (id == null) "Nova Medição" else "Editar Medição"
 }
 
-
-// --- ViewModel ---
 @HiltViewModel
 class AddEditMetricViewModel @Inject constructor(
     private val repository: MedicaoRepository,
@@ -62,8 +74,15 @@ class AddEditMetricViewModel @Inject constructor(
         if (metricId != null) {
             loadMedicao(metricId)
         } else {
-            // Pronto para criar uma nova medição, sem necessidade de carregar
-            _uiState.update { it.copy(isLoading = false) }
+            // Ao criar uma nova medição, já preenche com data e hora atuais
+            val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    dataMedicao = now.date,
+                    horaMedicao = LocalTime(now.hour, now.minute) // Ignora segundos para simplicidade
+                )
+            }
         }
     }
 
@@ -71,8 +90,10 @@ class AddEditMetricViewModel @Inject constructor(
         viewModelScope.launch {
             repository.getMedicaoById(id).onSuccess { medicao ->
                 if (medicao != null) {
-                    // [MODIFICADO] Extrai lat/lon da string de localização
                     val (lat, lon) = parseLocationString(medicao.localizacao)
+
+                    // Extrai data e hora do `createdAt` que vem do banco
+                    val dateTime = medicao.createdAt?.toLocalDateTime(TimeZone.currentSystemDefault())
 
                     _uiState.update {
                         it.copy(
@@ -87,7 +108,9 @@ class AddEditMetricViewModel @Inject constructor(
                             umidade = medicao.umidadePercent?.toString() ?: "",
                             latitude = lat,
                             longitude = lon,
-                            fotoUrl = medicao.foto
+                            fotoUrl = medicao.foto,
+                            dataMedicao = dateTime?.date,
+                            horaMedicao = dateTime?.let { dt -> LocalTime(dt.hour, dt.minute) }
                         )
                     }
                 } else {
@@ -99,8 +122,7 @@ class AddEditMetricViewModel @Inject constructor(
         }
     }
 
-    // --- Handlers de Mudança de Estado ---
-
+    // Handlers de Mudança de Estado
     fun onNomeLocalChange(newValue: String) { _uiState.update { it.copy(nomeLocal = newValue) } }
     fun onDescricaoChange(newValue: String) { _uiState.update { it.copy(descricao = newValue) } }
     fun onCo2Change(newValue: String) { _uiState.update { it.copy(co2 = newValue) } }
@@ -109,9 +131,6 @@ class AddEditMetricViewModel @Inject constructor(
     fun onTemperaturaChange(newValue: String) { _uiState.update { it.copy(temperatura = newValue) } }
     fun onUmidadeChange(newValue: String) { _uiState.update { it.copy(umidade = newValue) } }
 
-    /**
-     * Chamado quando uma nova imagem é capturada pela câmera.
-     */
     fun onImageCaptured(context: Context, uri: Uri) {
         viewModelScope.launch {
             val byteArray = ImageUtils().uriToByteArray(context, uri)
@@ -119,19 +138,19 @@ class AddEditMetricViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Chamado quando uma localização é selecionada e retornada pela MapSelectionScreen.
-     */
     fun onLocationSelected(latitude: Double, longitude: Double) {
-        _uiState.update {
-            it.copy(latitude = latitude, longitude = longitude)
-        }
+        _uiState.update { it.copy(latitude = latitude, longitude = longitude) }
     }
 
+    // Handlers para atualizar data e hora a partir dos Pickers
+    fun onDataChange(data: LocalDate) {
+        _uiState.update { it.copy(dataMedicao = data) }
+    }
 
-    /**
-     * Salva ou atualiza a medição no repositório.
-     */
+    fun onHoraChange(hora: LocalTime) {
+        _uiState.update { it.copy(horaMedicao = hora) }
+    }
+
     fun saveOrUpdateMedicao() {
         if (!_uiState.value.isFormValid) return
 
@@ -140,6 +159,9 @@ class AddEditMetricViewModel @Inject constructor(
         viewModelScope.launch {
             val currentState = _uiState.value
             val locationString = "POINT(${currentState.longitude} ${currentState.latitude})"
+
+            // Combina a data e hora selecionadas pelo usuário
+            val momentoMedicao = LocalDateTime(currentState.dataMedicao!!, currentState.horaMedicao!!)
 
             val medicao = Medicao(
                 id = currentState.id,
@@ -151,14 +173,14 @@ class AddEditMetricViewModel @Inject constructor(
                 temperaturaC = currentState.temperatura.toDoubleOrNull(),
                 umidadePercent = currentState.umidade.toDoubleOrNull(),
                 descricao = currentState.descricao.takeIf { it.isNotBlank() },
-                foto = currentState.fotoUrl
+                foto = currentState.fotoUrl,
+                // Converte o LocalDateTime local para um Instant (UTC) para salvar no banco
+                createdAt = momentoMedicao.toInstant(TimeZone.currentSystemDefault())
             )
 
-            // A lógica de decisão permanece, mas agora a correção será no repositório
             val result = if (medicao.id == null) {
                 repository.addMedicao(medicao, currentState.fotoByteArray)
             } else {
-                // ✅ ESTA É A CHAMADA CORRETA
                 repository.updateMedicao(medicao, currentState.fotoByteArray)
             }
 
@@ -170,16 +192,10 @@ class AddEditMetricViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Limpa os estados de sucesso/erro após a navegação.
-     */
     fun onSaveHandled() {
         _uiState.update { it.copy(saveSuccess = false, saveError = null) }
     }
 
-    /**
-     * Função auxiliar para converter a string "POINT(lon lat)" em um Par de Doubles.
-     */
     private fun parseLocationString(location: String?): Pair<Double?, Double?> {
         if (location == null) return Pair(null, null)
         return try {
@@ -188,7 +204,6 @@ class AddEditMetricViewModel @Inject constructor(
             val lat = coords[1].toDouble()
             Pair(lat, lon)
         } catch (e: Exception) {
-            // Retorna nulo se a string estiver mal formatada
             Pair(null, null)
         }
     }

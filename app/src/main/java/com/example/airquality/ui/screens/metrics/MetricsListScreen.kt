@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -24,6 +25,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
@@ -69,6 +71,7 @@ fun MetricsListScreen(
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = {
+                // Navega para a tela de adicionar, sem passar ID
                 navController.navigate(Screen.AddEditMetric.route)
             }) {
                 Icon(Icons.Default.Add, contentDescription = "Adicionar Medição")
@@ -84,10 +87,22 @@ fun MetricsListScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp)
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text("Medições", style = MaterialTheme.typography.headlineMedium)
-                Spacer(modifier = Modifier.height(16.dp))
+                Text("Minhas Medições", style = MaterialTheme.typography.headlineMedium)
+
+                // Barra de pesquisa
+                OutlinedTextField(
+                    value = uiState.searchQuery,
+                    onValueChange = viewModel::onSearchQueryChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Pesquisar por nome do local") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = "Ícone de Pesquisa")
+                    },
+                    singleLine = true
+                )
 
                 if (uiState.isLoading && uiState.medicoes.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -102,7 +117,13 @@ fun MetricsListScreen(
                     }
                 } else if (uiState.medicoes.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Nenhuma medição encontrada. Adicione uma no botão '+'.")
+                        // Mensagem muda dependendo se o usuário está pesquisando ou não
+                        Text(
+                            if (uiState.searchQuery.isBlank())
+                                "Nenhuma medição encontrada. Adicione uma no botão '+'."
+                            else
+                                "Nenhum resultado para \"${uiState.searchQuery}\""
+                        )
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -110,6 +131,7 @@ fun MetricsListScreen(
                             MedicaoItem(
                                 medicao = medicao,
                                 onEditClick = {
+                                    // Navega para a tela de edição, passando o ID da medição
                                     navController.navigate("${Screen.AddEditMetric.route}?metricId=${medicao.id}")
                                 },
                                 onDeleteClick = {
@@ -131,6 +153,7 @@ fun MetricsListScreen(
 
 @Composable
 fun MedicaoItem(medicao: Medicao, onEditClick: () -> Unit, onDeleteClick: () -> Unit) {
+    // Usa `createdAt` (um Instant) para formatar a data e hora
     val dataHoraFormatada = remember(medicao.createdAt) {
         medicao.createdAt?.let { instant ->
             val localDateTime = instant.toLocalDateTime(TimeZone.currentSystemDefault())
