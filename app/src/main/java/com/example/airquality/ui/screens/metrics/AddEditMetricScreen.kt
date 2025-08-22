@@ -2,7 +2,6 @@ package com.example.airquality.ui.screens.metrics
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +28,7 @@ import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -64,7 +64,6 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,7 +75,6 @@ fun AddEditMetricScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
 
-    // Estados para controlar a visibilidade dos diálogos de data e hora
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
 
@@ -131,38 +129,37 @@ fun AddEditMetricScreen(
                     singleLine = true
                 )
 
-                // Seção de Data e Hora
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Campo de Data
                     OutlinedTextField(
-                        value = uiState.dataMedicao?.let {
-                            val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")
-                            java.time.LocalDate.of(it.year, it.month, it.dayOfMonth).format(formatter)
-                        } ?: "",
-                        onValueChange = {},
-                        readOnly = true,
+                        value = uiState.dataString,
+                        onValueChange = viewModel::onDataStringChange,
+                        readOnly = false,
                         label = { Text("Data *") },
-                        leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = "Ícone de Data") },
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { showDatePicker = true }
+                        placeholder = { Text("dd/MM/aaaa") },
+                        isError = uiState.isDataInvalida,
+                        trailingIcon = {
+                            IconButton(onClick = { showDatePicker = true }) {
+                                Icon(Icons.Default.DateRange, contentDescription = "Abrir seletor de data")
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
                     )
-                    // Campo de Hora
                     OutlinedTextField(
-                        value = uiState.horaMedicao?.let {
-                            "${it.hour.toString().padStart(2, '0')}:${it.minute.toString().padStart(2, '0')}"
-                        } ?: "",
-                        onValueChange = {},
-                        readOnly = true,
+                        value = uiState.horaString,
+                        onValueChange = viewModel::onHoraStringChange,
+                        readOnly = false,
                         label = { Text("Hora *") },
-                        leadingIcon = { Icon(Icons.Default.Schedule, contentDescription = "Ícone de Hora") },
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { showTimePicker = true }
+                        placeholder = { Text("HH:mm") },
+                        isError = uiState.isHoraInvalida,
+                        trailingIcon = {
+                            IconButton(onClick = { showTimePicker = true }) {
+                                Icon(Icons.Default.Schedule, contentDescription = "Abrir seletor de hora")
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
                     )
                 }
 
-                // Seção de Localização
                 Column {
                     Button(
                         onClick = { navController.navigate(Screen.MapSelection.route) },
@@ -196,7 +193,6 @@ fun AddEditMetricScreen(
                     }
                 }
 
-                // Seção da Foto
                 Column {
                     val showImage = uiState.fotoByteArray != null || uiState.fotoUrl != null
 
@@ -247,7 +243,6 @@ fun AddEditMetricScreen(
         }
     }
 
-    // Diálogo do Date Picker
     if (showDatePicker) {
         val datePickerState = rememberDatePickerState(
             initialSelectedDateMillis = uiState.dataMedicao?.atStartOfDayIn(TimeZone.UTC)?.toEpochMilliseconds()
@@ -271,7 +266,6 @@ fun AddEditMetricScreen(
         }
     }
 
-    // Diálogo do Time Picker
     if (showTimePicker) {
         val timePickerState = rememberTimePickerState(
             initialHour = uiState.horaMedicao?.hour ?: java.time.LocalTime.now().hour,
@@ -294,7 +288,8 @@ fun AddEditMetricScreen(
                     TextButton(onClick = { showTimePicker = false }) { Text("Cancelar") }
                     Spacer(modifier = Modifier.size(8.dp))
                     TextButton(onClick = {
-                        viewModel.onHoraChange(LocalTime(timePickerState.hour, timePickerState.minute))
+                        val selectedTime = LocalTime(timePickerState.hour, timePickerState.minute)
+                        viewModel.onHoraChange(selectedTime)
                         showTimePicker = false
                     }) { Text("OK") }
                 }

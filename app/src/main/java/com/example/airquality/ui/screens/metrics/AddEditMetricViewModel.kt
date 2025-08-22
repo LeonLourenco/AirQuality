@@ -14,13 +14,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import javax.inject.Inject
 
 data class AddEditMetricUiState(
@@ -43,17 +42,22 @@ data class AddEditMetricUiState(
     val fotoByteArray: ByteArray? = null,
     val fotoUrl: String? = null,
 
-    // Campos para guardar a data e hora selecionadas
-    val dataMedicao: LocalDate? = null,
-    val horaMedicao: LocalTime? = null
+    // Estados para data/hora
+    private val dataMedicaoObj: LocalDate? = null,
+    private val horaMedicaoObj: LocalTime? = null,
+    val dataString: String = "",
+    val horaString: String = "",
+    val isDataInvalida: Boolean = false,
+    val isHoraInvalida: Boolean = false
 ) {
-    // Validação do formulário agora checa todos os campos obrigatórios
     val isFormValid: Boolean
         get() = nomeLocal.isNotBlank() &&
-                latitude != null &&
-                longitude != null &&
-                dataMedicao != null &&
-                horaMedicao != null
+                latitude != null && longitude != null &&
+                dataMedicaoObj != null && !isDataInvalida &&
+                horaMedicaoObj != null && !isHoraInvalida
+
+    val dataMedicao: LocalDate? get() = dataMedicaoObj
+    val horaMedicao: LocalTime? get() = horaMedicaoObj
 
     val screenTitle: String
         get() = if (id == null) "Nova Medição" else "Editar Medição"
@@ -69,18 +73,23 @@ class AddEditMetricViewModel @Inject constructor(
     val uiState = _uiState.asStateFlow()
 
     private val metricId: String? = savedStateHandle["metricId"]
+    private val dateFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
     init {
         if (metricId != null) {
             loadMedicao(metricId)
         } else {
-            // Ao criar uma nova medição, já preenche com data e hora atuais
             val now = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+            val data = now.date
+            val hora = LocalTime(now.hour, now.minute)
             _uiState.update {
                 it.copy(
                     isLoading = false,
-                    dataMedicao = now.date,
-                    horaMedicao = LocalTime(now.hour, now.minute) // Ignora segundos para simplicidade
+                    dataMedicaoObj = data,
+                    horaMedicaoObj = hora,
+                    dataString = java.time.LocalDate.of(data.year, data.month, data.dayOfMonth).format(dateFormatter),
+                    horaString = java.time.LocalTime.of(hora.hour, hora.minute).format(timeFormatter)
                 )
             }
         }
@@ -91,9 +100,8 @@ class AddEditMetricViewModel @Inject constructor(
             repository.getMedicaoById(id).onSuccess { medicao ->
                 if (medicao != null) {
                     val (lat, lon) = parseLocationString(medicao.localizacao)
-
-                    // Extrai data e hora do `createdAt` que vem do banco
-                    val dateTime = medicao.createdAt?.toLocalDateTime(TimeZone.currentSystemDefault())
+                    val data = medicao.data
+                    val hora = medicao.hora
 
                     _uiState.update {
                         it.copy(
@@ -109,8 +117,10 @@ class AddEditMetricViewModel @Inject constructor(
                             latitude = lat,
                             longitude = lon,
                             fotoUrl = medicao.foto,
-                            dataMedicao = dateTime?.date,
-                            horaMedicao = dateTime?.let { dt -> LocalTime(dt.hour, dt.minute) }
+                            dataMedicaoObj = data,
+                            horaMedicaoObj = hora,
+                            dataString = if (data != null) java.time.LocalDate.of(data.year, data.month, data.dayOfMonth).format(dateFormatter) else "",
+                            horaString = if (hora != null) java.time.LocalTime.of(hora.hour, hora.minute).format(timeFormatter) else ""
                         )
                     }
                 } else {
@@ -122,7 +132,6 @@ class AddEditMetricViewModel @Inject constructor(
         }
     }
 
-    // Handlers de Mudança de Estado
     fun onNomeLocalChange(newValue: String) { _uiState.update { it.copy(nomeLocal = newValue) } }
     fun onDescricaoChange(newValue: String) { _uiState.update { it.copy(descricao = newValue) } }
     fun onCo2Change(newValue: String) { _uiState.update { it.copy(co2 = newValue) } }
@@ -142,13 +151,54 @@ class AddEditMetricViewModel @Inject constructor(
         _uiState.update { it.copy(latitude = latitude, longitude = longitude) }
     }
 
-    // Handlers para atualizar data e hora a partir dos Pickers
+    fun onDataStringChange(texto: String) {
+        _uiState.update { it.copy(dataString = texto) }
+        try {
+            val data = java.time.LocalDate.parse(texto, dateFormatter)
+            _uiState.update {
+                it.copy(
+                    dataMedicaoObj = LocalDate(data.year, data.monthValue, data.dayOfMonth),
+                    isDataInvalida = false
+                )
+            }
+        } catch (e: DateTimeParseException) {
+            _uiState.update { it.copy(dataMedicaoObj = null, isDataInvalida = true) }
+        }
+    }
+
+    fun onHoraStringChange(texto: String) {
+        _uiState.update { it.copy(horaString = texto) }
+        try {
+            val hora = java.time.LocalTime.parse(texto, timeFormatter)
+            _uiState.update {
+                it.copy(
+                    horaMedicaoObj = LocalTime(hora.hour, hora.minute),
+                    isHoraInvalida = false
+                )
+            }
+        } catch (e: DateTimeParseException) {
+            _uiState.update { it.copy(horaMedicaoObj = null, isHoraInvalida = true) }
+        }
+    }
+
     fun onDataChange(data: LocalDate) {
-        _uiState.update { it.copy(dataMedicao = data) }
+        _uiState.update {
+            it.copy(
+                dataMedicaoObj = data,
+                dataString = java.time.LocalDate.of(data.year, data.month, data.dayOfMonth).format(dateFormatter),
+                isDataInvalida = false
+            )
+        }
     }
 
     fun onHoraChange(hora: LocalTime) {
-        _uiState.update { it.copy(horaMedicao = hora) }
+        _uiState.update {
+            it.copy(
+                horaMedicaoObj = hora,
+                horaString = java.time.LocalTime.of(hora.hour, hora.minute).format(timeFormatter),
+                isHoraInvalida = false
+            )
+        }
     }
 
     fun saveOrUpdateMedicao() {
@@ -160,22 +210,19 @@ class AddEditMetricViewModel @Inject constructor(
             val currentState = _uiState.value
             val locationString = "POINT(${currentState.longitude} ${currentState.latitude})"
 
-            // Combina a data e hora selecionadas pelo usuário
-            val momentoMedicao = LocalDateTime(currentState.dataMedicao!!, currentState.horaMedicao!!)
-
             val medicao = Medicao(
                 id = currentState.id,
                 nomeLocal = currentState.nomeLocal,
                 localizacao = locationString,
+                data = currentState.dataMedicao,
+                hora = currentState.horaMedicao,
                 co2Ppm = currentState.co2.toDoubleOrNull(),
                 hchoMgM3 = currentState.hcho.toDoubleOrNull(),
                 tvocMgM3 = currentState.tvoc.toDoubleOrNull(),
                 temperaturaC = currentState.temperatura.toDoubleOrNull(),
                 umidadePercent = currentState.umidade.toDoubleOrNull(),
                 descricao = currentState.descricao.takeIf { it.isNotBlank() },
-                foto = currentState.fotoUrl,
-                // Converte o LocalDateTime local para um Instant (UTC) para salvar no banco
-                createdAt = momentoMedicao.toInstant(TimeZone.currentSystemDefault())
+                foto = currentState.fotoUrl
             )
 
             val result = if (medicao.id == null) {
